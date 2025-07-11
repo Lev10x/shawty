@@ -1,0 +1,18 @@
+[package]
+name = "shawty"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thiserror = "2.0.12"
+anyhow = {version = "1.0.98", optional = true}
+reqwest = {version = "0.12.22", optional = true, features = ["blocking"]}
+url = {version = "2.5.4", optional = true}
+
+
+[features]
+default = ["network", "dev"]
+network = ["reqwest", "url"]
+
+dev = ["anyhow"]
+
