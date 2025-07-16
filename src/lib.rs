@@ -5,10 +5,9 @@
 #![deny(clippy::panic)]
 #![deny(clippy::unwrap_used)]
 
-mod error;
+pub mod error;
 
-use crate::error::ShawtyError;
-use crate::error::ShawtyError::*;
+use crate::error::*;
 
 use std::io::Read;
 use std::io::Write;
@@ -19,8 +18,8 @@ where
     T: std::fmt::Display + ?Sized,
 {
     let mut lock = std::io::stdout().lock();
-    write!(lock, "{msg}").map_err(|e| WriteIOError {
-        data: msg.to_string(),
+    write!(lock, "{msg}").map_err(|e| IOError::WriteError {
+        message: "Failed to print. (Failed to write to stdout)".to_string(),
         source: e,
     })?;
 
@@ -33,8 +32,8 @@ where
     T: std::fmt::Display + ?Sized,
 {
     let mut lock = std::io::stdout().lock();
-    writeln!(lock, "{msg}").map_err(|e| WriteIOError {
-        data: msg.to_string(),
+    writeln!(lock, "{msg}").map_err(|e| IOError::WriteError {
+        message: "Failed to println (Failed to writeln to stdout)".to_string(),
         source: e,
     })?;
 
@@ -49,13 +48,13 @@ pub fn input(msg: &str) -> Result<String, ShawtyError> {
 
     std::io::stdout()
         .flush()
-        .map_err(|e| FlushIOError { source: e })?;
+        .map_err(|e| IOError::FlushError { source: e })?;
 
     let mut input = String::new();
     std::io::stdin()
         .read_line(&mut input)
-        .map_err(|e| ReadIOError {
-            data: "stdin".to_string(),
+        .map_err(|e| IOError::ReadError {
+            message: "Failed to get input (Failed to read stdin)".to_string(),
             source: e,
         })?;
 
@@ -72,10 +71,12 @@ pub fn hold_console(message: Option<&str>) -> Result<(), ShawtyError> {
         println_no_panic("Press 'Enter' to continue...")? // Print default message.
     }
 
-    std::io::stdin().read(&mut [0]).map_err(|e| ReadIOError {
-        data: "stdin".to_string(),
-        source: e,
-    });
+    std::io::stdin()
+        .read(&mut [0])
+        .map_err(|e| IOError::ReadError {
+            message: "Failed to hold console. (Failed to read stdin)".to_string(),
+            source: e,
+        })?;
 
     Ok(())
 }
@@ -83,7 +84,7 @@ pub fn hold_console(message: Option<&str>) -> Result<(), ShawtyError> {
 /// Debug print, print a message with \[DEBUG\] at the beginning and new line at the end.
 pub fn dp<T>(msg: &T) -> Result<(), ShawtyError>
 where
-    T: std::fmt::Display + ?Sized, // std::fmt::Display says: Prefer implementing the Display trait for a type, rather than ToString
+    T: ToString + ?Sized,
 {
     let message = "[DEBUG] ".to_string() + &msg.to_string();
     println_no_panic(&message)?;
@@ -93,7 +94,7 @@ where
 
 /// Get current working directory.
 pub fn get_cwd_path() -> Result<std::path::PathBuf, ShawtyError> {
-    let cwd_path = std::env::current_dir().map_err(|e| OtherIOError {
+    let cwd_path = std::env::current_dir().map_err(|e| IOError::OtherError {
         message: "Failed to get cwd path, perhaps you don't have permission or it doesn't exist."
             .to_string(),
         source: e,
@@ -104,8 +105,8 @@ pub fn get_cwd_path() -> Result<std::path::PathBuf, ShawtyError> {
 
 /// Get all file and directory from a path.
 pub fn list_directory(path: &std::path::Path) -> Result<Vec<std::fs::DirEntry>, ShawtyError> {
-    let dir_iter = path.read_dir().map_err(|e| ReadIOError {
-        data: path.display().to_string(),
+    let dir_iter = path.read_dir().map_err(|e| IOError::ReadError {
+        message: format!("Failed to read directory: {}", path.to_string_lossy()),
         source: e,
     })?;
 
@@ -114,7 +115,36 @@ pub fn list_directory(path: &std::path::Path) -> Result<Vec<std::fs::DirEntry>, 
     Ok(dir_iter)
 }
 
-/// Clear the console, panic if failed.
+/// Create the directory by the provided path. (If the directory doesnt't exist it will do nothing.)
+///
+/// Will return Err if the directory does exist after creation.
+pub fn create_dir_and_check(path: &std::path::Path) -> Result<(), ShawtyError> {
+    if !path
+        .try_exists()
+        .is_ok_and(|symbol_not_broken| symbol_not_broken)
+    {
+        std::fs::create_dir(path).map_err(|e| IOError::WriteError {
+            message: format!("Failed to create directory: '{}'", path.to_string_lossy()),
+            source: e,
+        })?;
+
+        if !path
+            .try_exists()
+            .is_ok_and(|symbol_not_broken| symbol_not_broken)
+        {
+            return Err(ShawtyError::WeirdError {
+                message: format!(
+                    "After creation with no error, the directory still not exist. Path: '{}'",
+                    path.to_string_lossy()
+                ),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Clear the console, only on Windows.
 #[cfg(target_os = "windows")]
 fn clear_console() -> Result<(), ShawtyError> {
     let command = "cmd";
@@ -122,15 +152,17 @@ fn clear_console() -> Result<(), ShawtyError> {
     let mut child = std::process::Command::new(command)
         .args(command_args)
         .spawn()
-        .map_err(|e| ExecuteCommandError {
+        .map_err(|e| ShawtyError::ExecuteCommandError {
             command: command.to_string(),
             command_args: command_args.iter().map(|f| f.to_string()).collect(),
+            spawning_or_executing: "spawning".to_string(),
             error: e,
         })?;
 
-    child.wait().map_err(|e| ExecuteCommandError {
+    child.wait().map_err(|e| ShawtyError::ExecuteCommandError {
         command: command.to_string(),
         command_args: command_args.iter().map(|f| f.to_string()).collect(),
+        spawning_or_executing: "executing".to_string(),
         error: e,
     })?;
 
@@ -141,29 +173,22 @@ fn clear_console() -> Result<(), ShawtyError> {
 
 /// Create a reqwest client that can be reuse, default timeout is 30 seconds.
 #[cfg(feature = "network")]
-pub fn create_client(timeout_secs: Option<u64>) -> Result<reqwest::blocking::Client, ShawtyError> {
-    let client = reqwest::blocking::ClientBuilder::new()
-        .timeout(std::time::Duration::from_secs(timeout_secs.unwrap_or(30)))
+pub fn create_client(
+    timeout_secs: Option<u64>,
+    user_agent: Option<&str>,
+) -> Result<reqwest::blocking::Client, ShawtyError> {
+    let mut builder = reqwest::blocking::ClientBuilder::new()
+        .timeout(std::time::Duration::from_secs(timeout_secs.unwrap_or(30)));
+
+    if let Some(ua) = user_agent {
+        builder = builder.user_agent(ua);
+    };
+
+    let client = builder
         .build()
-        .map_err(|e| ClientBuilderError { source: e })?;
+        .map_err(|e| RequestError::ClientBuilderError { source: e })?;
 
     Ok(client)
-}
-
-/// Send a GET request to the url provided. (OLD)
-#[deprecated]
-#[cfg(feature = "network")]
-pub fn get_request_old<T>(url: &T) -> Result<reqwest::blocking::Response, ShawtyError>
-where
-    T: reqwest::IntoUrl + ToString + Clone,
-{
-    let respond = reqwest::blocking::get(url.clone()).map_err(|e| RequestError {
-        url: url.to_string(),
-        method: "GET".to_string(),
-        source: e,
-    })?;
-
-    Ok(respond)
 }
 
 /// Send a GET request to the url provided.
@@ -175,13 +200,16 @@ pub fn get_request<T>(
     client: &reqwest::blocking::Client,
 ) -> Result<reqwest::blocking::Response, ShawtyError>
 where
-    T: reqwest::IntoUrl + ToString + Clone,
+    T: reqwest::IntoUrl + ToString,
 {
-    let respond = client.get(url.clone()).send().map_err(|e| RequestError {
-        url: url.to_string(),
-        method: "GET".to_string(),
-        source: e,
-    })?;
+    let respond = client
+        .get(url.as_str())
+        .send()
+        .map_err(|e| RequestError::RequestFailed {
+            url: url.to_string(),
+            method: "GET".to_string(),
+            source: e,
+        })?;
 
     Ok(respond)
 }
@@ -199,7 +227,7 @@ pub fn post_request<T>(
 where
     T: reqwest::IntoUrl + ToString + Clone,
 {
-    let mut request = client.post(url.clone());
+    let mut request = client.post(url.as_str());
 
     if let Some(body) = body {
         request = request.body(body)
@@ -210,7 +238,8 @@ where
             request = request.header(name, value);
         }
     }
-    let respond = request.send().map_err(|e| RequestError {
+
+    let respond = request.send().map_err(|e| RequestError::RequestFailed {
         url: url.to_string(),
         method: "POST".to_string(),
         source: e,
@@ -232,27 +261,29 @@ where
     T: reqwest::IntoUrl + ToString + Clone,
 {
     let webhook_url = webhook_url.as_str();
-    let url = reqwest::Url::parse(webhook_url).map_err(|e| ParseURLError {
+    let url = reqwest::Url::parse(webhook_url).map_err(|e| RequestError::ParseURLError {
         url: webhook_url.to_string(),
         source: e,
     })?;
 
     if let Some(host_name) = url.host_str() {
         if !host_name.ends_with("discord.com") {
-            return Err(HostNotMatch {
+            return Err(RequestError::HostNotMatch {
                 input: url.to_string(),
                 message: "`send_to_discord_webhook` only accept Discord webhook url.".to_string(),
-            });
+            }
+            .into());
         }
     } else {
-        return Err(HostNotMatch {
+        return Err(RequestError::HostNotMatch {
             input: url.to_string(),
             message: "`send_to_discord_webhook` only accept Discord webhook url.".to_string(),
-        });
+        }
+        .into());
     }
 
     let json_payload = "{\"content\": \"".to_string() + message + "\"}";
-    dp(&json_payload);
+
     let mut headers = std::collections::hash_map::HashMap::new();
     let _ = headers.insert("Content-Type", "application/json");
     let respond = post_request(&webhook_url, client, Some(json_payload), Some(headers))?;
@@ -265,6 +296,23 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn whats_my_user_agent() {
+        let url = "https://api.bigdatacloud.net/data/client-info";
+        let client = create_client(None, Some("BigData is good.")).unwrap();
+
+        let respond = get_request(&url, &client).unwrap();
+        assert_eq!(
+            respond.status(),
+            200,
+            "Get request got respond, but status code is not 200 OK!"
+        );
+
+        let respond = respond.text();
+        println!("respond: {respond:?}");
+        //panic!("Give me stdout")
+    }
 
     #[test]
     fn test_get_cwd_have_same_result_as_std() {
@@ -291,7 +339,7 @@ mod test {
     #[test]
     fn test_get_request() {
         let url = "https://httpbin.org/get";
-        let client = create_client(None).unwrap();
+        let client = create_client(None, None).unwrap();
 
         let respond = post_request(&url, &client, None, None).unwrap();
         assert_eq!(
@@ -311,7 +359,7 @@ mod test {
     #[test]
     fn test_post_request() {
         let url = "https://httpbin.org/post";
-        let client = create_client(None).unwrap();
+        let client = create_client(None, None).unwrap();
         let respond = get_request(&url, &client).unwrap();
         assert_eq!(
             respond.status(),
