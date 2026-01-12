@@ -3,5 +3,5 @@
 Add the following under `[dependencies]` inside `Cargo.toml`: 
 
 ```toml
-shawty = { git = "https://github.com/Lev10x/shawty" }`
+shawty = { git = "https://github.com/Lev10x/shawty" }
 ```
