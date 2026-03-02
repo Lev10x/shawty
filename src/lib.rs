@@ -115,7 +115,7 @@ pub fn list_directory(path: &std::path::Path) -> Result<Vec<std::fs::DirEntry>, 
     Ok(dir_iter)
 }
 
-/// Create the directory by the provided path. (If the directory doesnt't exist it will do nothing.)
+/// Create the directory by the provided path. (If the directory doesn't exist it will do nothing.)
 ///
 /// Will return Err if the directory does exist after creation.
 pub fn create_dir_and_check(path: &std::path::Path) -> Result<(), ShawtyError> {
@@ -169,6 +169,48 @@ fn clear_console() -> Result<(), ShawtyError> {
     Ok(())
 }
 
+/// Like `concat!` but this can concatenate 'static str vars.
+const fn concat_bytes<const N: usize>(a: &str, b: &str) -> [u8; N] {
+    assert!(
+        a.len() + b.len() == N,
+        "N must equal the sum of both string lengths"
+    );
+
+    let mut out = [0u8; N];
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+
+    let mut i = 0;
+    while i < a.len() {
+        out[i] = a[i];
+        i += 1;
+    }
+
+    let mut j = 0;
+    while j < b.len() {
+        out[a.len() + j] = b[j];
+        j += 1;
+    }
+
+    out
+}
+
+#[macro_export]
+macro_rules! concat_static {
+    ($a:expr, $b:expr) => {{
+        const __CONCAT_A__: &str = $a;
+        const __CONCAT_B__: &str = $b;
+        const __CONCAT_LEN__: usize = __CONCAT_A__.len() + __CONCAT_B__.len();
+        const __CONCAT_BYTES__: [u8; __CONCAT_LEN__] =
+            concat_bytes::<__CONCAT_LEN__>(__CONCAT_A__, __CONCAT_B__);
+        const __CONCAT_RESULT__: &str = match std::str::from_utf8(&__CONCAT_BYTES__) {
+            Ok(s) => s,
+            Err(_) => panic!("Invalid UTF-8"),
+        };
+        __CONCAT_RESULT__
+    }};
+}
+
 //////////////////////////////////// NETWORK ////////////////////////////////////
 
 /// Create a reqwest client that can be reuse, default timeout is 30 seconds.
@@ -193,7 +235,7 @@ pub fn create_client(
 
 /// Send a GET request to the url provided.
 ///
-/// Require a client, recommand using `shawty::create_client()` to create one that can be reuse.
+/// Require a client, recommend using `shawty::create_client()` to create one that can be reuse.
 #[cfg(feature = "network")]
 pub fn get_request<T>(
     url: &T,
@@ -216,7 +258,7 @@ where
 
 /// Send a POST request to the url provided.
 ///
-/// Require a client, recommand using `shawty::create_client()` to create one that can be reuse.
+/// Require a client, recommend using `shawty::create_client()` to create one that can be reuse.
 #[cfg(feature = "network")]
 pub fn post_request<T>(
     url: &T,
@@ -250,7 +292,7 @@ where
 
 /// Send a message to provided Discord webhook url.
 ///
-/// Require a client, recommand using `shawty::create_client()` to create one that can be reuse.
+/// Require a client, recommend using `shawty::create_client()` to create one that can be reuse.
 #[cfg(feature = "network")]
 pub fn send_to_discord_webhook<T>(
     client: &reqwest::blocking::Client,
@@ -376,5 +418,87 @@ mod test {
             200,
             "Post request got respond, but status code is not 200 OK!"
         )
+    }
+
+    // concat_static tests
+
+    const A: &'static str = "A";
+    const B: &'static str = "B";
+    static C: &'static str = "C";
+    static D: &'static str = "D";
+
+    const CONST_STATIC_MIX: &str = concat_static!(A, C);
+    const TWO_CONST: &str = concat_static!(A, B);
+    const TWO_STATIC: &str = concat_static!(C, D);
+    const LITERALS: &str = concat_static!("hello", " world");
+    const EMPTY_LEFT: &str = concat_static!("", "hello");
+    const EMPTY_RIGHT: &str = concat_static!("hello", "");
+    const BOTH_EMPTY: &str = concat_static!("", "");
+    const UNICODE: &str = concat_static!("héllo", " wörld");
+    const MIXED: &str = concat_static!(A, "_suffix");
+    const MULTI_WORD: &str = concat_static!("foo bar ", "baz qux");
+
+    #[test]
+    fn test_const_static_mix() {
+        assert_eq!(CONST_STATIC_MIX, "AC");
+    }
+
+    #[test]
+    fn test_two_const() {
+        assert_eq!(TWO_CONST, "AB");
+    }
+
+    #[test]
+    fn test_two_static() {
+        assert_eq!(TWO_STATIC, "CD");
+    }
+
+    #[test]
+    fn test_string_literals() {
+        assert_eq!(LITERALS, "hello world");
+    }
+
+    #[test]
+    fn test_empty_left() {
+        assert_eq!(EMPTY_LEFT, "hello");
+    }
+
+    #[test]
+    fn test_empty_right() {
+        assert_eq!(EMPTY_RIGHT, "hello");
+    }
+
+    #[test]
+    fn test_both_empty() {
+        assert_eq!(BOTH_EMPTY, "");
+    }
+
+    #[test]
+    fn test_unicode_is_valid() {
+        // Proves the byte copy preserves multibyte UTF-8 sequences correctly
+        assert_eq!(UNICODE, "héllo wörld");
+    }
+
+    #[test]
+    fn test_mixed_var_and_literal() {
+        assert_eq!(MIXED, "A_suffix");
+    }
+
+    #[test]
+    // Ensures the result is truly &'static str, not a runtime-allocated String
+    fn test_result_is_static() {
+        let _: &'static str = CONST_STATIC_MIX;
+        let _: &'static str = LITERALS;
+    }
+
+    #[test]
+    fn test_length_is_sum_of_parts() {
+        assert_eq!(CONST_STATIC_MIX.len(), A.len() + B.len());
+        assert_eq!(LITERALS.len(), "hello".len() + " world".len());
+    }
+
+    #[test]
+    fn test_multi_word() {
+        assert_eq!(MULTI_WORD, "foo bar baz qux");
     }
 }
