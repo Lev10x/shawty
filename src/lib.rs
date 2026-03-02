@@ -202,8 +202,7 @@ macro_rules! concat_static {
         const __CONCAT_A__: &str = $a;
         const __CONCAT_B__: &str = $b;
         const __CONCAT_LEN__: usize = __CONCAT_A__.len() + __CONCAT_B__.len();
-        const __CONCAT_BYTES__: [u8; __CONCAT_LEN__] =
-            concat_bytes::<__CONCAT_LEN__>(__CONCAT_A__, __CONCAT_B__);
+        const __CONCAT_BYTES__: [u8; __CONCAT_LEN__] = $crate::concat_bytes::<__CONCAT_LEN__>(__CONCAT_A__, __CONCAT_B__);
         const __CONCAT_RESULT__: &str = match std::str::from_utf8(&__CONCAT_BYTES__) {
             Ok(s) => s,
             Err(_) => panic!("Invalid UTF-8"),
