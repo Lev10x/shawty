@@ -169,8 +169,9 @@ fn clear_console() -> Result<(), ShawtyError> {
     Ok(())
 }
 
+#[doc(hidden)]
 /// Like `concat!` but this can concatenate 'static str vars.
-const fn concat_bytes<const N: usize>(a: &str, b: &str) -> [u8; N] {
+pub const fn concat_bytes<const N: usize>(a: &str, b: &str) -> [u8; N] {
     assert!(
         a.len() + b.len() == N,
         "N must equal the sum of both string lengths"
